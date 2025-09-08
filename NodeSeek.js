@@ -1,11 +1,9 @@
 /*
- NodeSeek 一体化脚本 (Surge)
+ NodeSeek 一体化脚本 (Surge) — 无延迟版
  - HTTP 阶段：从请求 Cookie 或响应 Set-Cookie 抓取并合并到 NODESEEK_COOKIE（& 分隔多账号）
- - Cron 阶段：多账号签到（随机延迟/倒计时/收益统计/通知）
- - 可选开关（持久化写入即可，无需 $argument）：
+ - Cron 阶段：多账号立即签到（无随机等待；账号间 600ms 间隔）
+ - 可选开关（写入 $persistentStore 即可）：
     ONLY_SIGNIN=true/false     默认 false（true=仅签到，不统计）
-    RANDOM_SIGNIN=true/false   默认 true
-    MAX_RANDOM_DELAY=秒       默认 3600（会被自动裁剪）
     STATS_DAYS=天             默认 30
     NS_RANDOM=true/false      默认 true
 */
@@ -50,31 +48,21 @@ if (typeof $request !== "undefined" || typeof $response !== "undefined") {
   $done({});
 }
 
-// ==================== Cron 签到逻辑 ====================
+// ==================== Cron 签到逻辑（无随机等待） ====================
 function readConf(k, d = "") {
   const v = $persistentStore.read(k);
   return (v !== null && v !== undefined && v !== "") ? v : d;
 }
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
-const ONLY_SIGNIN   = String(readConf("ONLY_SIGNIN",   "false")).toLowerCase() === "true";
-const NS_RANDOM     = String(readConf("NS_RANDOM",     "true" )).toLowerCase() === "true";
-const RANDOM_SIGNIN = String(readConf("RANDOM_SIGNIN", "true" )).toLowerCase() === "true";
-const MAX_RANDOM_DELAY = parseInt(readConf("MAX_RANDOM_DELAY", "3600"), 10) || 0;
-const STATS_DAYS       = Math.max(1, parseInt(readConf("STATS_DAYS", "30"), 10) || 30);
-
-// —— 固定限幅，防止脚本超时（Surge timeout=600 时建议 580）——
-const SAFE_DELAY_CAP = 580; // 秒，写死不暴露为配置
+const ONLY_SIGNIN   = String(readConf("ONLY_SIGNIN", "false")).toLowerCase() === "true";
+const NS_RANDOM     = String(readConf("NS_RANDOM",   "true")).toLowerCase() === "true";
+const STATS_DAYS    = Math.max(1, parseInt(readConf("STATS_DAYS", "30"), 10) || 30);
 
 const rawCookies = (readConf("NODESEEK_COOKIE", "") || "").trim();
 const cookieList = rawCookies.split("&").map(s => s.trim()).filter(Boolean);
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-function fmt(sec) {
-  if (sec <= 0) return "立即执行";
-  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
-  return h ? `${h}小时${m}分${s}秒` : (m ? `${m}分${s}秒` : `${s}秒`);
-}
 
 function httpGet(url, headers = {}) {
   return new Promise(resolve => {
@@ -147,49 +135,25 @@ async function getStats(cookie, days = 30) {
     return;
   }
 
-  // —— 生成计划：随机延迟并自动裁剪到 ≤ SAFE_DELAY_CAP ——
-  const plan = cookieList
-    .map((ck, i) => {
-      const rawDelay = RANDOM_SIGNIN ? Math.floor(Math.random() * (MAX_RANDOM_DELAY + 1)) : 0;
-      const delay = Math.min(rawDelay, SAFE_DELAY_CAP);
-      if (rawDelay !== delay) {
-        console.log(`账号${i + 1} 随机延迟 ${rawDelay}s 超阈值，已裁剪为 ${delay}s`);
-      }
-      return { idx: i + 1, ck, delay };
-    })
-    .sort((a, b) => a.delay - b.delay);
+  // —— 无延迟：按顺序直接签到（账号间 600ms 间隔） ——
+  for (let i = 0; i < cookieList.length; i++) {
+    const idx = i + 1;
+    const ck  = cookieList[i];
 
-  if (RANDOM_SIGNIN) {
-    console.log("==== 签到时间表（随机，已限幅） ====");
-    plan.forEach(p => console.log(`账号${p.idx}: 延迟 ${fmt(p.delay)}`));
-  }
-
-  // —— 执行 —— 
-  for (const p of plan) {
-    if (p.delay > 0) {
-      let remain = p.delay;
-      console.log(`账号${p.idx} 需要等待 ${fmt(remain)}`);
-      while (remain > 0) {
-        const step = remain <= 10 ? 1 : Math.min(10, remain);
-        await sleep(step * 1000);
-        remain -= step;
-        if (remain <= 10 || remain % 10 === 0) console.log(`账号${p.idx} 倒计时: ${fmt(remain)}`);
-      }
-    }
-
-    const ret = await doSign(p.ck);
+    const ret = await doSign(ck);
     if (ret.status === "success" || ret.status === "already") {
       if (ONLY_SIGNIN) {
-        $notification.post("NodeSeek ✅", `账号${p.idx}`, ret.msg || "OK");
+        $notification.post("NodeSeek ✅", `账号${idx}`, ret.msg || "OK");
       } else {
-        const s = await getStats(p.ck, STATS_DAYS);
-        $notification.post("NodeSeek ✅", `账号${p.idx}`, `${ret.msg}\n${s.period}已签到${s.count}天，共${s.total}个鸡腿，平均${s.avg}/天`);
+        const s = await getStats(ck, STATS_DAYS);
+        $notification.post("NodeSeek ✅", `账号${idx}`, `${ret.msg}\n${s.period}已签到${s.count}天，共${s.total}个鸡腿，平均${s.avg}/天`);
       }
     } else {
-      $notification.post("NodeSeek ❌", `账号${p.idx}`, ret.msg || "未知原因");
+      $notification.post("NodeSeek ❌", `账号${idx}`, ret.msg || "未知原因");
     }
 
-    await sleep(600); // 账号间隔
+    // 账号之间稍作间隔，避免过于密集
+    await sleep(600);
   }
 
   console.log("==== 所有账号签到完成 ====");
