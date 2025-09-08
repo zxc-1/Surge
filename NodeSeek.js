@@ -7,6 +7,18 @@ NodeSeek 一体化（无等待版）
     ONLY_SIGNIN=true/false   默认 false（true=只签到，不统计）
     STATS_DAYS=天           默认 30
     NS_RANDOM=true/false    默认 true（出勤接口 ?random=true/false）
+    
+[Script]
+# 抓 Cookie（请求/响应都触发）
+NodeSeek-Req  = type=http-request,pattern=^https?:\/\/([a-z0-9-]+\.)*nodeseek\.com\/.*$,requires-body=0,max-size=0,script-path=file:///usr/scripts/nodeseek_nodelay.js
+NodeSeek-Resp = type=http-response,pattern=^https?:\/\/([a-z0-9-]+\.)*nodeseek\.com\/.*$,requires-body=0,max-size=0,script-path=file:///usr/scripts/nodeseek_nodelay.js
+
+# 定时签到（无延迟 + 带统计）
+NodeSeek-Cron = type=cron,cronexp=23 14 * * *,wake-system=1,timeout=120,script-path=file:///usr/scripts/nodeseek_nodelay.js
+
+[MITM]
+hostname = %APPEND% nodeseek.com, *.nodeseek.com
+
 */
 
 /* ==================== 抓 Cookie ==================== */
