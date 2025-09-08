@@ -1,23 +1,21 @@
 /*
- NodeSeek 一体化脚本 (Surge) — 无延迟版
- - HTTP 阶段：从请求 Cookie 或响应 Set-Cookie 抓取并合并到 NODESEEK_COOKIE（& 分隔多账号）
- - Cron 阶段：多账号立即签到（无随机等待；账号间 600ms 间隔）
- - 可选开关（写入 $persistentStore 即可）：
-    ONLY_SIGNIN=true/false     默认 false（true=仅签到，不统计）
-    STATS_DAYS=天             默认 30
-    NS_RANDOM=true/false      默认 true
+NodeSeek 一体化（无等待版）
+- HTTP 阶段：抓 Cookie（请求/响应头）
+- Cron 阶段：直接逐账号签到（账号间隔 600ms，无随机延迟）
+- 功能：签到 + 近N天收益统计 + 通知
+- 可选配置（持久化键）：
+    ONLY_SIGNIN=true/false   默认 false（true=只签到，不统计）
+    STATS_DAYS=天           默认 30
+    NS_RANDOM=true/false    默认 true（出勤接口 ?random=true/false）
 */
 
-// ==================== 抓 Cookie（HTTP 请求/响应触发） ====================
+/* ==================== 抓 Cookie ==================== */
 if (typeof $request !== "undefined" || typeof $response !== "undefined") {
   try {
     const KEY = "NODESEEK_COOKIE";
     const url = ($request && $request.url) || "";
-
-    // 请求头 Cookie
     const reqCK = ($request && ($request.headers?.Cookie || $request.headers?.cookie)) || "";
 
-    // 响应头 Set-Cookie -> 拼接成 "k1=v1; k2=v2"
     let respCK = "";
     const setCookie = $response?.headers?.["Set-Cookie"] || $response?.headers?.["set-cookie"];
     if (setCookie) {
@@ -48,16 +46,17 @@ if (typeof $request !== "undefined" || typeof $response !== "undefined") {
   $done({});
 }
 
-// ==================== Cron 签到逻辑（无随机等待） ====================
+/* ==================== 签到逻辑 ==================== */
 function readConf(k, d = "") {
   const v = $persistentStore.read(k);
   return (v !== null && v !== undefined && v !== "") ? v : d;
 }
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
-const ONLY_SIGNIN   = String(readConf("ONLY_SIGNIN", "false")).toLowerCase() === "true";
-const NS_RANDOM     = String(readConf("NS_RANDOM",   "true")).toLowerCase() === "true";
-const STATS_DAYS    = Math.max(1, parseInt(readConf("STATS_DAYS", "30"), 10) || 30);
+
+const ONLY_SIGNIN = String(readConf("ONLY_SIGNIN", "false")).toLowerCase() === "true";
+const NS_RANDOM   = String(readConf("NS_RANDOM",   "true" )).toLowerCase() === "true";
+const STATS_DAYS  = Math.max(1, parseInt(readConf("STATS_DAYS", "30"), 10) || 30);
 
 const rawCookies = (readConf("NODESEEK_COOKIE", "") || "").trim();
 const cookieList = rawCookies.split("&").map(s => s.trim()).filter(Boolean);
@@ -114,7 +113,7 @@ async function getStats(cookie, days = 30) {
     const j = JSON.parse(data || "{}");
     if (!j.success || !Array.isArray(j.data) || j.data.length === 0) break;
     all = all.concat(j.data);
-    await sleep(250);
+    await sleep(200);
   }
   const rec = all.filter(r => {
     const [amount, , desc, ts] = r;
@@ -135,7 +134,7 @@ async function getStats(cookie, days = 30) {
     return;
   }
 
-  // —— 无延迟：按顺序直接签到（账号间 600ms 间隔） ——
+  // —— 无延迟：按顺序直接签到（账号间隔 600ms） ——
   for (let i = 0; i < cookieList.length; i++) {
     const idx = i + 1;
     const ck  = cookieList[i];
@@ -152,8 +151,7 @@ async function getStats(cookie, days = 30) {
       $notification.post("NodeSeek ❌", `账号${idx}`, ret.msg || "未知原因");
     }
 
-    // 账号之间稍作间隔，避免过于密集
-    await sleep(600);
+    await sleep(600); // 账号间隔
   }
 
   console.log("==== 所有账号签到完成 ====");
