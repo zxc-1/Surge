@@ -1,25 +1,25 @@
 /*
  NodeSeek 一体化脚本 (Surge)
- - HTTP 阶段：从请求 Cookie 或响应 Set-Cookie 抓取并合并到 NODESEEK_COOKIE
+ - HTTP 阶段：从请求 Cookie 或响应 Set-Cookie 抓取并合并到 NODESEEK_COOKIE（& 分隔多账号）
  - Cron 阶段：多账号签到（随机延迟/倒计时/收益统计/通知）
- - 可选开关（写入 $persistentStore 即可，无需 $argument）：
-    ONLY_SIGNIN=true/false     默认 false（true 时仅签到，不统计）
+ - 可选开关（持久化写入即可，无需 $argument）：
+    ONLY_SIGNIN=true/false     默认 false（true=仅签到，不统计）
     RANDOM_SIGNIN=true/false   默认 true
-    MAX_RANDOM_DELAY=秒       默认 3600
+    MAX_RANDOM_DELAY=秒       默认 3600（会被自动裁剪）
     STATS_DAYS=天             默认 30
     NS_RANDOM=true/false      默认 true
 */
 
-/* ==================== 抓 Cookie（HTTP 请求/响应触发） ==================== */
+// ==================== 抓 Cookie（HTTP 请求/响应触发） ====================
 if (typeof $request !== "undefined" || typeof $response !== "undefined") {
   try {
     const KEY = "NODESEEK_COOKIE";
     const url = ($request && $request.url) || "";
 
-    // 1) 从请求抓 Cookie
+    // 请求头 Cookie
     const reqCK = ($request && ($request.headers?.Cookie || $request.headers?.cookie)) || "";
 
-    // 2) 从响应抓 Set-Cookie（拼接为 "k1=v1; k2=v2" 形式）
+    // 响应头 Set-Cookie -> 拼接成 "k1=v1; k2=v2"
     let respCK = "";
     const setCookie = $response?.headers?.["Set-Cookie"] || $response?.headers?.["set-cookie"];
     if (setCookie) {
@@ -50,19 +50,21 @@ if (typeof $request !== "undefined" || typeof $response !== "undefined") {
   $done({});
 }
 
-/* ==================== 以下为 Cron 签到逻辑 ==================== */
+// ==================== Cron 签到逻辑 ====================
 function readConf(k, d = "") {
   const v = $persistentStore.read(k);
   return (v !== null && v !== undefined && v !== "") ? v : d;
 }
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
-
 const ONLY_SIGNIN   = String(readConf("ONLY_SIGNIN",   "false")).toLowerCase() === "true";
 const NS_RANDOM     = String(readConf("NS_RANDOM",     "true" )).toLowerCase() === "true";
 const RANDOM_SIGNIN = String(readConf("RANDOM_SIGNIN", "true" )).toLowerCase() === "true";
 const MAX_RANDOM_DELAY = parseInt(readConf("MAX_RANDOM_DELAY", "3600"), 10) || 0;
 const STATS_DAYS       = Math.max(1, parseInt(readConf("STATS_DAYS", "30"), 10) || 30);
+
+// —— 固定限幅，防止脚本超时（Surge timeout=600 时建议 580）——
+const SAFE_DELAY_CAP = 580; // 秒，写死不暴露为配置
 
 const rawCookies = (readConf("NODESEEK_COOKIE", "") || "").trim();
 const cookieList = rawCookies.split("&").map(s => s.trim()).filter(Boolean);
@@ -99,9 +101,9 @@ async function doSign(cookie) {
     if (err) return { status: "error", msg: String(err) };
     const j = JSON.parse(data || "{}");
     const msg = j.message || "";
-    if (j.success || msg.includes("鸡腿"))       return { status: "success", msg };
-    if (msg.includes("已完成签到"))              return { status: "already", msg };
-    if (j.status === 404)                        return { status: "invalid", msg };
+    if (j.success || msg.includes("鸡腿")) return { status: "success", msg };
+    if (msg.includes("已完成签到")) return { status: "already", msg };
+    if (j.status === 404) return { status: "invalid", msg };
     return { status: "fail", msg: msg || "未知错误" };
   } catch (e) {
     return { status: "error", msg: String(e) };
@@ -145,17 +147,24 @@ async function getStats(cookie, days = 30) {
     return;
   }
 
-  // 生成计划（随机延迟）
+  // —— 生成计划：随机延迟并自动裁剪到 ≤ SAFE_DELAY_CAP ——
   const plan = cookieList
-    .map((ck, i) => ({ idx: i + 1, ck, delay: RANDOM_SIGNIN ? Math.floor(Math.random() * (MAX_RANDOM_DELAY + 1)) : 0 }))
+    .map((ck, i) => {
+      const rawDelay = RANDOM_SIGNIN ? Math.floor(Math.random() * (MAX_RANDOM_DELAY + 1)) : 0;
+      const delay = Math.min(rawDelay, SAFE_DELAY_CAP);
+      if (rawDelay !== delay) {
+        console.log(`账号${i + 1} 随机延迟 ${rawDelay}s 超阈值，已裁剪为 ${delay}s`);
+      }
+      return { idx: i + 1, ck, delay };
+    })
     .sort((a, b) => a.delay - b.delay);
 
   if (RANDOM_SIGNIN) {
-    console.log("==== 签到时间表（随机） ====");
+    console.log("==== 签到时间表（随机，已限幅） ====");
     plan.forEach(p => console.log(`账号${p.idx}: 延迟 ${fmt(p.delay)}`));
   }
 
-  // 执行
+  // —— 执行 —— 
   for (const p of plan) {
     if (p.delay > 0) {
       let remain = p.delay;
@@ -164,9 +173,7 @@ async function getStats(cookie, days = 30) {
         const step = remain <= 10 ? 1 : Math.min(10, remain);
         await sleep(step * 1000);
         remain -= step;
-        if (remain <= 10 || remain % 10 === 0) {
-          console.log(`账号${p.idx} 倒计时: ${fmt(remain)}`);
-        }
+        if (remain <= 10 || remain % 10 === 0) console.log(`账号${p.idx} 倒计时: ${fmt(remain)}`);
       }
     }
 
@@ -182,7 +189,7 @@ async function getStats(cookie, days = 30) {
       $notification.post("NodeSeek ❌", `账号${p.idx}`, ret.msg || "未知原因");
     }
 
-    await sleep(600); // 账号间隔，温和一点
+    await sleep(600); // 账号间隔
   }
 
   console.log("==== 所有账号签到完成 ====");
