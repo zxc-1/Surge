@@ -11,12 +11,6 @@
    MANUAL_NO_DELAY=true/false 默认 true（手动运行不等待）
 */
 
-const arg = $argument || "";
-if (arg && arg.includes("CK_SWITCH=false")) {
-  // 按钮关闭时直接结束，不执行抓 Cookie
-  $done();
-}
-
 
 
 // ========== HTTP-REQUEST：获取 Cookie（可见，无频率限制） ==========
