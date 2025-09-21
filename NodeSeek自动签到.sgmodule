@@ -5,10 +5,11 @@
 [Script]
 # 按钮开关：Arguments 里新增 CK_SWITCH，值 true/false
 # true 时抓取 Cookie
-http-request ^https?:\/\/(?:www\.)?nodeseek\.com\/ script-path=https://raw.githubusercontent.com/zxc-1/Surge/refs/heads/main/NodeSeek.js, argument=CK_SWITCH, timeout=10
+{{{NodeSeek-ck}}} = type=http-request,pattern=^https?:\/\/(?:www\.)?nodeseek\.com\/,script-path=https://raw.githubusercontent.com/zxc-1/Surge/refs/heads/main/NodeSeek.js,requires-body=0
 
 # 定时签到：每天 09:12 运行
-cron "12 9 * * *" script-path=https://raw.githubusercontent.com/zxc-1/Surge/refs/heads/main/NodeSeek.js, timeout=120, wake-system=true
+{{{NodeSeek签到}}} = type=cron,cronexp=41 7 * * *,script-path=https://raw.githubusercontent.com/zxc-1/Surge/refs/heads/main/NodeSeek.js,wake-system=1,timeout=15
+
 
 [MITM]
 hostname = nodeseek.com, www.nodeseek.com
