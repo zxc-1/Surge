@@ -1,0 +1,11 @@
+#!name=GLaDOS 自动签到
+#!desc=按本地 Cron 定时请求 GLaDOS 签到并可选推送到 Telegram
+#!system=ios
+
+[Script]
+# 默认每天 09:10 运行（使用设备本地时区，可自行改 cron 表达式）
+cron "10 9 * * *" script-path=glados.surge.js, timeout=60, wake-system=true
+
+[MITM]
+# 无需抓流量，所以不要求 MITM；若你要在脚本里调试流量，可自行添加
+hostname = glados.rocks
